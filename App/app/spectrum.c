@@ -98,6 +98,17 @@ static uint16_t spectrum_peaks[128];
 static uint8_t spectrum_peak_age[128];
 static uint16_t spectrum_smoothed[128];
 
+// Professional 4x4 Bayer waterfall definitions
+#define WATERFALL_ROWS_PIXELS 16
+#define WATERFALL_PAGES (WATERFALL_ROWS_PIXELS / 8)
+#define WATERFALL_PAGE_START 4
+#define RULER_PAGE 3
+
+// Waterfall buffers and state - declared here for early access in ResetScanStats
+static uint8_t waterfall_rows[WATERFALL_ROWS_PIXELS][16];
+static uint8_t waterfall_phase = 0;       // advances 0→1→2→3→0 for temporal dithering
+static uint16_t waterfall_scan_count = 0; // tracks scans for statistics
+
 int vfo;
 uint8_t freqInputIndex = 0;
 uint8_t freqInputDotIndex = 0;
@@ -506,6 +517,12 @@ static void ResetScanStats()
     // Reset spectrum enhancements (peak hold and smoothing)
     memset(spectrum_peaks, 0xFF, sizeof(spectrum_peaks));  // 0xFF = RSSI_MAX_VALUE
     memset(spectrum_peak_age, 0, sizeof(spectrum_peak_age));
+    
+    // Reset waterfall phase and buffer to ensure synchronization with spectrum
+    // This creates a clean state for the next scan cycle
+    memset(waterfall_rows, 0, sizeof(waterfall_rows));
+    waterfall_phase = 0;
+    waterfall_scan_count = 0;
 }
 
 static void InitScan()
@@ -1078,54 +1095,61 @@ static void UpdateSpectrumPeaks(uint16_t bars)
 #endif
 
 // Waterfall definitions (file-scope)
-#define WATERFALL_ROWS_PIXELS 16
-#define WATERFALL_PAGES (WATERFALL_ROWS_PIXELS / 8)
-#define WATERFALL_PAGE_START 4
-#define RULER_PAGE 3
-
-// 4x4 Bayer matrix (values 0..15)
+// Professional 4x4 Bayer matrix (values 0..15, optimized for smooth dithering)
+// This matrix provides excellent gray-level distribution for single-bit displays
 static const uint8_t gBayer4x4[4][4] = {
-    {0, 8, 2, 10},
-    {12, 4, 14, 6},
-    {3, 11, 1, 9},
-    {15, 7, 13, 5}
+    {0,   8,  2,  10},   // Row 0: even distribution
+    {12,  4,  14, 6},    // Row 1: diagonal pattern
+    {3,   11, 1,  9},    // Row 2: complementary to row 0
+    {15,  7,  13, 5}     // Row 3: complementary to row 1
 };
-
-// Waterfall rows stored as one bit per pixel (128 bits -> 16 bytes per row)
-static uint8_t waterfall_rows[WATERFALL_ROWS_PIXELS][16];
-static uint8_t waterfall_phase = 0; // advances each new line for temporal Bayer phase
 
 // Add a new waterfall row (scrolls older rows down). Uses current `rssiHistory`.
 static void Waterfall_AddLine(void)
 {
-    // shift down
+    // Shift all rows down (oldest discarded)
     for (int r = WATERFALL_ROWS_PIXELS - 1; r > 0; --r)
     {
         memcpy(waterfall_rows[r], waterfall_rows[r - 1], sizeof(waterfall_rows[0]));
     }
 
-    // advance temporal Bayer phase (0..3)
+    // Advance temporal Bayer phase for better dithering quality
+    // Cycles through 0→1→2→3→0 to provide 4-level effective gray in time domain
     waterfall_phase = (waterfall_phase + 1) & 3;
+    waterfall_scan_count++;
 
-    // build new top row
+    // Build new top row using professional Bayer dithering
     memset(waterfall_rows[0], 0, sizeof(waterfall_rows[0]));
+    
     for (int x = 0; x < 128; ++x)
     {
-        uint16_t rssi = rssiHistory[x >> settings.stepsCount];
+        // Get RSSI value synchronized with spectrum graph
+        // rssiHistory stores 128 frequency bins, indexed 0-127
+        uint16_t rssi = rssiHistory[x];
         if (rssi == RSSI_MAX_VALUE)
-            continue;
+            continue;  // Skip invalid measurements
 
+        // Convert RSSI to dBm
         int dbm = Rssi2DBm(rssi);
         int dbmin = settings.dbMin;
         int dbmax = settings.dbMax;
-        if (dbmax <= dbmin) dbmax = dbmin + 1;
+        
+        // Ensure valid range
+        if (dbmax <= dbmin) 
+            dbmax = dbmin + 1;
+        
+        // Map dBm to 0-15 level for dithering (4 bits of resolution)
+        // This provides 16 effective gray levels with temporal dithering
         int lev = (dbm - dbmin) * 15 / (dbmax - dbmin + 1);
         if (lev < 0) lev = 0;
         if (lev > 15) lev = 15;
 
-        int bx = x & 3;
-        int by = waterfall_phase & 3; // vary threshold in time for vertical dither
+        // Get spatial position in 4x4 Bayer matrix
+        int bx = x & 3;           // x position in matrix (0-3)
+        int by = waterfall_phase & 3;  // temporal phase (0-3, cycles with each scan)
 
+        // Compare level against threshold - creates dithered pixel
+        // Temporal phase variation provides smooth animation effect
         if ((uint8_t)lev > gBayer4x4[by][bx])
         {
             waterfall_rows[0][x >> 3] |= (1 << (x & 7));
@@ -1133,19 +1157,24 @@ static void Waterfall_AddLine(void)
     }
 }
 
-// Render waterfall buffer into frame buffer pages starting at WATERFALL_PAGE_START
+// Render waterfall buffer into frame buffer with professional appearance
 static void DrawWaterfall(void)
 {
+    // Process 2 pages (16 pixels = 2 bytes per page)
     for (int p = 0; p < WATERFALL_PAGES; ++p)
     {
+        // Process each column to convert bit array to framebuffer format
         for (int col = 0; col < 128; ++col)
         {
             uint8_t b = 0;
+            
+            // Pack 8 rows into one framebuffer byte (vertical bit layout)
             for (int bit = 0; bit < 8; ++bit)
             {
                 int row = p * 8 + bit;
                 if (row < WATERFALL_ROWS_PIXELS)
                 {
+                    // Extract bit from waterfall row
                     uint8_t byte = waterfall_rows[row][col >> 3];
                     uint8_t bitv = (byte >> (col & 7)) & 1;
                     b |= (bitv << bit);
@@ -2012,6 +2041,9 @@ void APP_RunSpectrum()
     RelaunchScan();
 
     memset(rssiHistory, 0, sizeof(rssiHistory));
+    memset(waterfall_rows, 0, sizeof(waterfall_rows));
+    waterfall_phase = 0;
+    waterfall_scan_count = 0;
 
     isInitialized = true;
 
