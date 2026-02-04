@@ -1986,7 +1986,7 @@ void APP_RunSpectrum()
     LoadSettings();
 #endif
     // set the current frequency in the middle of the display
-#ifdef ENABLE_SCAN_RANGES
+    #ifdef ENABLE_SCAN_RANGES
     if (gScanRangeStart)
     {
         currentFreq = initialFreq = gScanRangeStart;
@@ -1999,26 +1999,33 @@ void APP_RunSpectrum()
             }
         }
         settings.stepsCount = STEPS_128;
-        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-            gEeprom.CURRENT_STATE = 5;
-        #endif
-    }
-    else {
+#ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+        gEeprom.CURRENT_STATE = 5;
 #endif
-        currentFreq = initialFreq = gTxVfo->pRX->Frequency -
-                                    ((GetStepsCount() / 2) * GetScanStep());
-        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-            gEeprom.CURRENT_STATE = 4;
-        #endif
     }
-
-    #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-        SETTINGS_WriteCurrentState();
+    else
+    {
+        currentFreq = initialFreq = gTxVfo->pRX->Frequency -
+                                        ((GetStepsCount() / 2) * GetScanStep());
+#ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+        gEeprom.CURRENT_STATE = 4;
+#endif
+    }
+    #else
+    currentFreq = initialFreq = gTxVfo->pRX->Frequency -
+                                ((GetStepsCount() / 2) * GetScanStep());
+#ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+    gEeprom.CURRENT_STATE = 4;
+#endif
     #endif
 
-    #ifdef ENABLE_FEAT_F4HWN_SPECTRUM
-        LoadSettings();
-    #endif
+#ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+    SETTINGS_WriteCurrentState();
+#endif
+
+#ifdef ENABLE_FEAT_F4HWN_SPECTRUM
+    LoadSettings();
+#endif
     BackupRegisters();
 
     isListening = true; // to turn off RX later
