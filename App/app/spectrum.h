@@ -42,7 +42,8 @@
 #include <stdint.h>
 #include <string.h>
 
-static const uint8_t DrawingEndY = 28;
+// Reserve 16 pixels at bottom for waterfall (was 40)
+static const uint8_t DrawingEndY = 24;
 
 static const uint8_t U8RssiMap[] = {
     121,
