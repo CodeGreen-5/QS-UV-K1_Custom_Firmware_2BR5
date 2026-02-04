@@ -1169,14 +1169,14 @@ static void DrawWaterfall(void)
             uint8_t b = 0;
             
             // Pack 8 rows into one framebuffer byte (vertical bit layout)
-            for (int bit = 0; bit < 8; ++bit)
+            for (int bit = 0; bit < 9; ++bit)
             {
-                int row = p * 8 + bit;
+                int row = p * 9 + bit;
                 if (row < WATERFALL_ROWS_PIXELS)
                 {
                     // Extract bit from waterfall row
                     uint8_t byte = waterfall_rows[row][col >> 3];
-                    uint8_t bitv = (byte >> (col & 7)) & 1;
+                    uint8_t bitv = (byte >> (col & 8)) & 1;
                     b |= (bitv << bit);
                 }
             }
@@ -1817,11 +1817,6 @@ static void UpdateScan()
     redrawScreen = true;
     preventKeypress = false;
     
-    // Clear peak hold immediately when scan completes (don't wait for next scan)
-    // This prevents ghost peaks from lingering after signal disappears
-    memset(spectrum_peaks, 0xFF, sizeof(spectrum_peaks));
-    memset(spectrum_peak_age, 0, sizeof(spectrum_peak_age));
-
     UpdatePeakInfo();
     if (IsPeakOverLevel())
     {
