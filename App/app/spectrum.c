@@ -1,4 +1,4 @@
-/* Copyright 2023 fagci
+/* Copyright 2023 fagci + 2026 N7SIX
  * https://github.com/fagci
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
